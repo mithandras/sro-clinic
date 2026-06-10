@@ -17,12 +17,20 @@ export default function ConsultTimer({ onLog }) {
   const [patient, setPatient] = useState(null);
   const [suggestedLevel, setSuggestedLevel] = useState('');
   const [selectedLevel, setSelectedLevel] = useState('');
+  const [dailyCount, setDailyCount] = useState(0);
   const [log, setLog] = useState(['System initialized...']);
   const timerRef = useRef(null);
 
   useEffect(() => {
-    getDoctors().then(setDoctors).catch(() => addLog('Failed to load doctors'));
-    getMbsLevels().then(setMbsLevels).catch(() => addLog('Failed to load MBS levels'));
+    getDoctors()
+      .then(data => {
+        setDoctors(data);
+        addLog('Practitioners loaded successfully');
+      })
+      .catch(() => addLog('Failed to load doctors'));
+    getMbsLevels()
+      .then(setMbsLevels)
+      .catch(() => addLog('Failed to load MBS levels'));
   }, []);
 
   useEffect(() => {
@@ -34,15 +42,18 @@ export default function ConsultTimer({ onLog }) {
   }, [searchTerm]);
 
   function addLog(msg) {
-    setLog(prev => [`${new Date().toLocaleTimeString()} — ${msg}`, ...prev]);
+    const time = new Date().toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    setLog(prev => [`[${time}] ${msg}`, ...prev]);
   }
 
   function startConsult() {
+    const doctor = doctors.find(d => d.id === doctorId);
     const now = new Date();
     setStartTime(now);
     setElapsed(0);
     setPanel('timer');
-    addLog('Consultation started');
+    addLog(`Starting consultation for ${doctor?.full_name}...`);
+    setTimeout(() => addLog(`Consultation started for ${doctor?.full_name}`), 200);
     timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
   }
 
@@ -53,7 +64,6 @@ export default function ConsultTimer({ onLog }) {
     setSuggestedLevel(level ? level.level_code : mbsLevels[0]?.level_code);
     setSelectedLevel(level ? level.level_code : mbsLevels[0]?.level_code);
     setPanel('review');
-    addLog(`Consult ended — ${mins} min — suggested ${level?.level_code}`);
   }
 
   async function finalise() {
@@ -64,6 +74,8 @@ export default function ConsultTimer({ onLog }) {
     const clinicShare = parseFloat((grossAmount - doctorShare).toFixed(2));
     const endTime = new Date();
 
+    addLog(`Finalising — Level ${selectedLevel} for ${doctor?.full_name}...`);
+
     try {
       await createTransaction({
         doctorId, patientId: patient?.id || null,
@@ -71,19 +83,38 @@ export default function ConsultTimer({ onLog }) {
         durationMin: Math.floor(elapsed / 60), mbsLevel: selectedLevel,
         setting, grossAmount, doctorShare, clinicShare, isAfterHours: false,
       });
-      addLog('Session recorded successfully');
+
+      const newCount = dailyCount + 1;
+      setDailyCount(newCount);
+      const today = new Date().toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+      addLog(`Level ${selectedLevel} consultation recorded for ${doctor?.full_name}`);
+      setTimeout(() => addLog(`${doctor?.full_name} has completed ${newCount} consult(s) today (${today})`), 200);
+      setTimeout(() => addLog(`Ready for next consult — ${doctor?.full_name}`), 400);
+
       if (onLog) onLog();
-      resetAll();
+      resetForNextConsult(doctorId, setting);
     } catch {
       addLog('ERROR: Failed to record session');
     }
   }
 
-  function resetAll() {
+  function resetForNextConsult(keepDoctorId, keepSetting) {
     setPanel('setup');
-    setDoctorId(''); setSetting(''); setConfirmed(false);
-    setPatient(null); setSearchTerm(''); setSearchResults([]);
-    setElapsed(0); setStartTime(null);
+    setDoctorId(keepDoctorId);
+    setSetting(keepSetting);
+    setConfirmed(false);
+    setPatient(null);
+    setSearchTerm('');
+    setSearchResults([]);
+    setElapsed(0);
+    setStartTime(null);
+  }
+
+  function discardSession() {
+    const doctor = doctors.find(d => d.id === doctorId);
+    addLog(`Session discarded for ${doctor?.full_name}`);
+    resetForNextConsult(doctorId, setting);
   }
 
   function formatTime(s) {
@@ -199,7 +230,7 @@ export default function ConsultTimer({ onLog }) {
                 FINALISE & RECORD SESSION
               </button>
               <div className="text-center">
-                <button onClick={resetAll} className="text-red-500 text-sm">Discard Session</button>
+                <button onClick={discardSession} className="text-red-500 text-sm">Discard Session</button>
               </div>
             </div>
           )}
