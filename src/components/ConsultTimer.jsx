@@ -20,6 +20,7 @@ export default function ConsultTimer({ onLog }) {
   const [dailyCount, setDailyCount] = useState(0);
   const [log, setLog] = useState(['System initialized...']);
   const timerRef = useRef(null);
+  const logEndRef = useRef(null);
 
   useEffect(() => {
     getDoctors()
@@ -34,6 +35,12 @@ export default function ConsultTimer({ onLog }) {
   }, []);
 
   useEffect(() => {
+    if (logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [log]);
+
+  useEffect(() => {
     if (searchTerm.length < 3) { setSearchResults([]); return; }
     const t = setTimeout(() => {
       searchPatients(searchTerm).then(setSearchResults).catch(() => addLog('Patient search failed'));
@@ -43,7 +50,7 @@ export default function ConsultTimer({ onLog }) {
 
   function addLog(msg) {
     const time = new Date().toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-    setLog(prev => [`[${time}] ${msg}`, ...prev]);
+    setLog(prev => [...prev, `[${time}] ${msg}`]);
   }
 
   function startConsult() {
@@ -52,8 +59,7 @@ export default function ConsultTimer({ onLog }) {
     setStartTime(now);
     setElapsed(0);
     setPanel('timer');
-    addLog(`Starting consultation for ${doctor?.full_name}...`);
-    setTimeout(() => addLog(`Consultation started for ${doctor?.full_name}`), 200);
+    addLog(`Consultation started for ${doctor?.full_name}`);
     timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
   }
 
@@ -74,11 +80,9 @@ export default function ConsultTimer({ onLog }) {
     const clinicShare = parseFloat((grossAmount - doctorShare).toFixed(2));
     const endTime = new Date();
 
-    addLog(`Finalising — Level ${selectedLevel} for ${doctor?.full_name}...`);
-
     try {
       await createTransaction({
-        doctorId, patientId: patient?.id || null,
+        doctorId, patientId: patient.id,
         startTime: startTime.toISOString(), endTime: endTime.toISOString(),
         durationMin: Math.floor(elapsed / 60), mbsLevel: selectedLevel,
         setting, grossAmount, doctorShare, clinicShare, isAfterHours: false,
@@ -86,11 +90,9 @@ export default function ConsultTimer({ onLog }) {
 
       const newCount = dailyCount + 1;
       setDailyCount(newCount);
-      const today = new Date().toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-      addLog(`Level ${selectedLevel} consultation recorded for ${doctor?.full_name}`);
-      setTimeout(() => addLog(`${doctor?.full_name} has completed ${newCount} consult(s) today (${today})`), 200);
-      setTimeout(() => addLog(`Ready for next consult — ${doctor?.full_name}`), 400);
+      addLog(`Level ${selectedLevel} for ${patient.first_name} ${patient.last_name} by ${doctor?.full_name} (${newCount} today)`);
+      addLog(`Ready for next consult — ${doctor?.full_name}`);
 
       if (onLog) onLog();
       resetForNextConsult(doctorId, setting);
@@ -182,7 +184,7 @@ export default function ConsultTimer({ onLog }) {
                 {searchResults.length > 0 && (
                   <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1">
                     {searchResults.map(p => (
-                      <div key={p.id} onClick={() => { setPatient(p); setSearchTerm(''); setSearchResults([]); }}
+                      <div key={p.id} onClick={() => { setPatient(p); setSearchTerm(''); setSearchResults([]); addLog(`Patient selected: ${p.first_name} ${p.last_name}`); }}
                         className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm">
                         {p.first_name} {p.last_name} — {p.dob}
                       </div>
@@ -192,13 +194,13 @@ export default function ConsultTimer({ onLog }) {
                 {patient && (
                   <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mt-2">
                     <span className="text-sm font-medium text-blue-800">{patient.first_name} {patient.last_name}</span>
-                    <button onClick={() => setPatient(null)} className="text-red-500 text-lg font-bold">×</button>
+                    <button onClick={() => { setPatient(null); addLog('Patient cleared'); }} className="text-red-500 text-lg font-bold">×</button>
                   </div>
                 )}
               </div>
 
-              <button onClick={endConsult}
-                className="w-full bg-gray-800 text-white font-bold py-3 rounded-lg hover:bg-gray-900 transition">
+              <button onClick={endConsult} disabled={!patient}
+                className="w-full bg-gray-800 text-white font-bold py-3 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-900 transition">
                 FINISH CONSULT
               </button>
             </div>
@@ -210,7 +212,7 @@ export default function ConsultTimer({ onLog }) {
                 <h3 className="font-bold text-gray-800 mb-3">Final Review</h3>
                 <div className="grid grid-cols-2 gap-y-2 text-sm">
                   <span className="text-gray-500">Doctor</span><span className="font-medium">{doctor?.full_name}</span>
-                  <span className="text-gray-500">Patient</span><span className="font-medium">{patient ? `${patient.first_name} ${patient.last_name}` : 'Anonymous'}</span>
+                  <span className="text-gray-500">Patient</span><span className="font-medium">{patient.first_name} {patient.last_name}</span>
                   <span className="text-gray-500">Setting</span><span className="font-medium">{setting}</span>
                   <span className="text-gray-500">Duration</span><span className="font-medium">{Math.floor(elapsed / 60)} min</span>
                   <span className="text-gray-500">Suggested</span><span className="font-bold text-blue-600 text-base">{suggestedLevel}</span>
@@ -240,8 +242,9 @@ export default function ConsultTimer({ onLog }) {
 
       <div className="mt-4">
         <label className="block text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">System Log</label>
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-2 h-24 overflow-y-auto font-mono text-xs text-gray-500">
+        <div className="bg-black border border-gray-700 rounded-lg p-2 h-40 overflow-y-auto font-mono text-xs text-green-400">
           {log.map((l, i) => <div key={i}>{l}</div>)}
+          <div ref={logEndRef} />
         </div>
       </div>
     </div>
