@@ -1,3 +1,3 @@
 git add .
-git commit -m "Screen 1 - log messages fixed"
+git commit -m "Screen 2 - patient pays"
 git push

@@ -15,6 +15,8 @@ async function query(sql, params = []) {
   return data.rows;
 }
 
+// ─── ConsultTimer ─────────────────────────────────────────────────────────────
+
 export async function getDoctors() {
   return query('SELECT id, full_name, service_fee_percentage, email FROM doctors WHERE is_active = true ORDER BY full_name');
 }
@@ -88,4 +90,74 @@ export async function createInvoice(data) {
       data.consultCount, data.totalGross, data.serviceFee, data.gstAmount, data.totalOwing
     ]
   );
+}
+
+// ─── Front Desk Billing ───────────────────────────────────────────────────────
+
+/**
+ * Search unpaid consults by patient name for the billing search panel.
+ * Maps to GAS: ConsultRepository.getUnpaid(searchTerm)
+ * SQL: get_unpaid_consults($1)
+ */
+export async function searchConsults(term) {
+  const rows = await query('SELECT * FROM get_unpaid_consults($1)', [term]);
+  return rows || [];
+}
+
+/**
+ * Fetch a single consult by transaction ID for the preload flow.
+ * Maps to GAS: ConsultRepository.getConsultByTransactionId(transactionId)
+ * SQL: get_consult_by_id($1)
+ */
+export async function getConsultByTransactionId(transactionId) {
+  const rows = await query('SELECT * FROM get_consult_by_id($1)', [transactionId]);
+  return rows[0] || null;
+}
+
+/**
+ * Resolve the private fee for a given doctor, MBS level, and after-hours flag.
+ * Maps to GAS: DoctorRepository.resolvePrivateFee(doctorId, mbsLevel, isAfterHours)
+ * SQL: resolve_private_fee($1, $2, $3)
+ * Note: GAS passes (doctorId, !!isAfterHours, mbsLevel) — order preserved here.
+ */
+export async function getPrivateFee(doctorId, mbsLevel, isAfterHours) {
+  const rows = await query(
+    'SELECT * FROM resolve_private_fee($1, $2, $3)',
+    [doctorId, !!isAfterHours, mbsLevel]
+  );
+  const raw = rows[0]?.resolve_private_fee;
+  if (raw == null) return null;
+  return typeof raw === 'string' ? JSON.parse(raw) : raw;
+}
+
+/**
+ * Mark a consult as paid — bulk bill or private.
+ * Maps to GAS: ConsultRepository.markBulkBill(id) or markPrivatePaid(id, amount)
+ * Returns { patientName, amount } as expected by FrontDeskBilling.
+ */
+export async function processFinalPayment(transactionId, mode, total, gap) {
+  if (mode === 'BULK') {
+    const rows = await query('SELECT * FROM mark_bulk_bill($1)', [transactionId]);
+    const row = rows[0] || {};
+    return {
+      patientName: row.patient_name || '',
+      amount: 0,
+    };
+  }
+
+  // PRIVATE
+  const rows = await query(
+    'SELECT * FROM mark_private_paid($1, $2)',
+    [transactionId, total]
+  );
+  const row = rows[0] || {};
+  return {
+    patientName: row.patient_name || '',
+    amount: total,
+  };
+}
+
+export async function getRecentUnpaidConsults() {
+  const rows = await query('SELECT * FROM get_recent_unpaid_consults()');
+  return rows || [];
 }

@@ -22,28 +22,43 @@ export default function ConsultTimer({ onLog }) {
   const timerRef = useRef(null);
   const logEndRef = useRef(null);
 
+  // Initialize and load dependencies on mount
   useEffect(() => {
     getDoctors()
       .then(data => {
-        setDoctors(data);
+        setDoctors(data || []);
         addLog('Practitioners loaded successfully');
       })
-      .catch(() => addLog('Failed to load doctors'));
+      .catch((err) => {
+        console.error("Doctors Load Error:", err);
+        addLog(`Failed to load doctors: ${err.message || 'Unknown Network Error'}`);
+      });
+
     getMbsLevels()
-      .then(setMbsLevels)
-      .catch(() => addLog('Failed to load MBS levels'));
+      .then(data => {
+        setMbsLevels(data || []);
+        addLog('MBS levels loaded successfully');
+      })
+      .catch((err) => {
+        console.error("MBS Load Error:", err);
+        addLog(`Failed to load MBS levels: ${err.message || 'Unknown Network Error'}`);
+      });
   }, []);
 
+  // Auto-scroll the system logger viewport
   useEffect(() => {
     if (logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [log]);
 
+  // Debounced Patient Lookup
   useEffect(() => {
     if (searchTerm.length < 3) { setSearchResults([]); return; }
     const t = setTimeout(() => {
-      searchPatients(searchTerm).then(setSearchResults).catch(() => addLog('Patient search failed'));
+      searchPatients(searchTerm)
+        .then(setSearchResults)
+        .catch(() => addLog('Patient search failed'));
     }, 300);
     return () => clearTimeout(t);
   }, [searchTerm]);
@@ -212,7 +227,7 @@ export default function ConsultTimer({ onLog }) {
                 <h3 className="font-bold text-gray-800 mb-3">Final Review</h3>
                 <div className="grid grid-cols-2 gap-y-2 text-sm">
                   <span className="text-gray-500">Doctor</span><span className="font-medium">{doctor?.full_name}</span>
-                  <span className="text-gray-500">Patient</span><span className="font-medium">{patient.first_name} {patient.last_name}</span>
+                  <span className="text-gray-500">Patient</span><span className="font-medium">{patient?.first_name} {patient?.last_name}</span>
                   <span className="text-gray-500">Setting</span><span className="font-medium">{setting}</span>
                   <span className="text-gray-500">Duration</span><span className="font-medium">{Math.floor(elapsed / 60)} min</span>
                   <span className="text-gray-500">Suggested</span><span className="font-bold text-blue-600 text-base">{suggestedLevel}</span>
