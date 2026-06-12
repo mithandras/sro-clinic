@@ -34,16 +34,29 @@ export async function getMbsLevels() {
   return query('SELECT level_code, description, min_minutes, normal_fee, after_hours_fee FROM mbs_levels ORDER BY min_minutes');
 }
 
+/**
+ * Insert a completed transaction AND its corresponding doctor_service_fees row
+ * in a single atomic statement, so the service fee ledger can never drift
+ * out of sync with the transactions table.
+ */
 export async function createTransaction(data) {
   return query(
-    `INSERT INTO transactions 
-      (doctor_id, patient_id, start_time, end_time, duration_min, mbs_level, setting, gross_amount, doctor_share, clinic_share, status, payment_status, is_after_hours)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'COMPLETED','UNPAID',$11)
-     RETURNING id`,
+    `WITH new_txn AS (
+       INSERT INTO transactions 
+         (doctor_id, patient_id, start_time, end_time, duration_min, mbs_level, setting, gross_amount, doctor_share, clinic_share, status, payment_status, is_after_hours)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'COMPLETED','UNPAID',$11)
+       RETURNING id
+     ),
+     fee_insert AS (
+       INSERT INTO doctor_service_fees (transaction_id, doctor_id, amount, doctor_net_share)
+       SELECT id, $12, $10, $9 FROM new_txn
+       RETURNING id
+     )
+     SELECT id FROM new_txn`,
     [
       data.doctorId, data.patientId, data.startTime, data.endTime,
       data.durationMin, data.mbsLevel, data.setting, data.grossAmount,
-      data.doctorShare, data.clinicShare, data.isAfterHours
+      data.doctorShare, data.clinicShare, data.isAfterHours, data.doctorId
     ]
   );
 }
@@ -159,5 +172,55 @@ export async function processFinalPayment(transactionId, mode, total, gap) {
 
 export async function getRecentUnpaidConsults() {
   const rows = await query('SELECT * FROM get_recent_unpaid_consults()');
+  return rows || [];
+}
+
+// ─── Service Fee ──────────────────────────────────────────────────────────────
+
+/**
+ * Get the outstanding service fee summary for each doctor with a balance owing
+ * or pending (unpaid) consults.
+ * Maps to /service screen.
+ * SQL: get_service_fee_summary()
+ * Returns rows: { doctor_id, doctor_name, consult_count, service_fee, gst_amount, total_owing, unpaid_consult_count }
+ */
+export async function getServiceFeeSummary() {
+  const rows = await query('SELECT * FROM get_service_fee_summary()');
+  return rows || [];
+}
+
+/**
+ * Mark all outstanding (PAID-consult) service fees for a doctor as paid.
+ * Maps to the PAID button on /service.
+ * SQL: mark_service_fee_paid($1)
+ * Returns { status, doctorId, consultsPaid, amountSettled } or { error }.
+ */
+export async function markServiceFeePaid(doctorId) {
+  const rows = await query('SELECT * FROM mark_service_fee_paid($1)', [doctorId]);
+  const raw = rows[0]?.mark_service_fee_paid;
+  if (raw == null) return null;
+
+  const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+
+  if (result.error) {
+    return { error: result.error };
+  }
+
+  return {
+    status: result.status,
+    doctorId: result.doctor_id,
+    consultsPaid: result.consults_paid,
+    amountSettled: result.amount_settled,
+  };
+}
+
+/**
+ * Get all consults for a doctor where the patient/Medicare has not yet paid.
+ * Maps to /unpaid screen.
+ * SQL: get_unpaid_consults_by_doctor($1)
+ * Returns rows: { transaction_id, patient_name, start_time, mbs_level, setting, gross_amount, clinic_share }
+ */
+export async function getUnpaidConsultsByDoctor(doctorId) {
+  const rows = await query('SELECT * FROM get_unpaid_consults_by_doctor($1)', [doctorId]);
   return rows || [];
 }
